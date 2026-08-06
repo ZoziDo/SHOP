@@ -1,23 +1,83 @@
-local files = {
-    {path = "/lib/json.lua", link = "https://raw.githubusercontent.com/rxi/json.lua/master/json.lua"},
-    {path = "/lib/serialization.lua", link = "https://raw.githubusercontent.com/MightyPirates/OpenComputers/master-MC1.7.10/src/main/resources/assets/opencomputers/loot/openos/lib/serialization.lua"}
-}
+-- ============================================================
+-- RIPMARKET / OpenComputers terminal (fixed local version)
+-- Local-only build: no HTTP downloads and no external loader.
+-- Required files on this computer:
+--   /home/terminal.lua
+--   /home/terminal_config.lua
+--   /home/list.lua
+-- ============================================================
 
-if not filesystem.exists("/lib") then
-    filesystem.makeDirectory("/lib")
+local component = require("component")
+local computer = require("computer")
+local filesystem = require("filesystem")
+local unicode = require("unicode")
+local serialization = require("serialization")
+
+local CONFIG_PATH = "/home/terminal_config.lua"
+local configChunk, configError = loadfile(CONFIG_PATH)
+if not configChunk then
+    error("Не найден или поврежден " .. CONFIG_PATH .. ": " .. tostring(configError))
 end
 
-for file = 1, #files do
-    if not filesystem.exists(files[file].path) then
-        write(files[file].path, "w", request(files[file].link))
+local config = configChunk()
+if type(config) ~= "table" then
+    error(CONFIG_PATH .. " должен возвращать таблицу настроек")
+end
+
+local function getComponent(componentType, friendlyName)
+    local address = component.list(componentType)()
+    if not address then
+        error("Не найден компонент " .. (friendlyName or componentType) .. " (тип: " .. componentType .. ")")
     end
+    return component.proxy(address), address
 end
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-local me_side = "DOWN"
-local pim_side = "UP"
-local server = "Default"
-local version, port = "modem", 1414
-local serverAddress = "6fccfc0c-082c-4228-9dec-71a2185ea085"
+
+local gpu = component.gpu
+if not gpu then
+    error("Не найдена видеокарта GPU")
+end
+
+local maxWidth, maxHeight = gpu.maxResolution()
+if maxWidth < 60 or maxHeight < 19 then
+    error("Для интерфейса нужен экран с разрешением минимум 60x19; доступно " .. maxWidth .. "x" .. maxHeight)
+end
+gpu.setResolution(60, 19)
+
+local pim = getComponent(config.pimComponent or "pim", "PIM")
+local me = getComponent(config.meComponent or "me_interface", "МЭ-интерфейс")
+local selector = getComponent(config.selectorComponent or "openperipheral_selector", "Item Selector")
+local modem = getComponent(config.modemComponent or "modem", "модем")
+local tmpfs = component.proxy(computer.tmpAddress())
+
+local sleep = os.sleep
+local terminal = computer.address()
+
+local me_side = config.meSide or "DOWN"
+local pim_side = config.pimSide or "UP"
+local server = config.serverName or "Default"
+local port = tonumber(config.port) or 1414
+local serverAddress = tostring(config.serverAddress or "")
+local listPath = config.listPath or "/home/list.lua"
+
+if serverAddress == "" or serverAddress:find("ВСТАВ") or serverAddress:find("PASTE") then
+    error("Укажите адрес модема серверного компьютера в " .. CONFIG_PATH)
+end
+
+local admins = {}
+for _, name in ipairs(config.admins or {}) do
+    admins[name] = true
+end
+local dev = config.devOnly == true
+
+local function write(path, mode, data)
+    local file, reason = io.open(path, mode or "w")
+    if not file then
+        error("Не удалось открыть файл " .. tostring(path) .. ": " .. tostring(reason))
+    end
+    file:write(data or "")
+    file:close()
+    return true
+end
 
 local priceLottery = 150
 local superPrize = 10000
@@ -31,9 +91,6 @@ local INFO = [[
 [0x68f029]5. [0xffffff]За нарушение правил сервера при использовании магазина вы будете заблокированы.
 ]]
 
-local pim, me, selector, tmpfs, modem = proxy("pim"), proxy("me_interface"), proxy("openperipheral_selector"), component.proxy(computer.tmpAddress())
-local json, serialization = require("json"), require("serialization")
-local terminal = computer.address()
 local key
 local moneyFingerprint = {dmg=0.0,id="customnpcs:npcMoney"}
 
@@ -162,10 +219,6 @@ local function drawPim()
     end
 end
 
-local function discord()
-    setColorText(12, 18, "[0x303030]По любым проблемам пишите: [0x337d11]Doggernaut", color.background) --tarcassum
-end
-
 local function outOfService(reason)
     active = false
     clear()
@@ -175,7 +228,6 @@ local function outOfService(reason)
     if reason then
         set(nil, 16, "Причина: " .. reason, color.background, color.gray)
     end
-    discord()
 end
 
 local function time(raw)
@@ -188,34 +240,14 @@ local function time(raw)
 end
 
 local function log(data, name)
-    local timestamp = time(true)
-
-    local date = os.date("%d.%m.%Y", timestamp)
-    local path = "/logs/" .. date .. "/"
-    local days = {date .. "/", os.date("%d.%m.%Y/", timestamp - 86400), os.date("%d.%m.%Y/", timestamp - 172800), os.date("%d.%m.%Y/", timestamp - 259200)}
-    local data = os.date("[%H:%M:%S]", timestamp) .. tostring(data) .. "\n"
-
-    for day = 1, #days do 
-        days[days[day]], days[day] = true, nil
-    end
-    if not filesystem.exists(path) then
-        filesystem.makeDirectory(path)
+    local logDir = "/home/logs"
+    if not filesystem.exists(logDir) then
+        filesystem.makeDirectory(logDir)
     end
 
-    local paths = filesystem.list("/logs/")
-    for oldPath = 1, #paths do 
-        local checkPath = "/logs/" .. paths[oldPath]
-
-        if not days[paths[oldPath]] and filesystem.isDirectory(checkPath) and checkPath:match("%d+.%d+.%d+.log") then
-            filesystem.remove(checkPath)
-        end
-    end
-
-    if name then
-        write(path .. name .. ".log", "a", data)
-    else
-        write(path .. "main.log", "a", data)
-    end
+    local safeName = name and tostring(name):gsub("[^%w_%-]", "_") or "main"
+    local line = "[" .. time(false) .. "] " .. tostring(data) .. "\n"
+    write(logDir .. "/" .. safeName .. ".log", "a", line)
 end
 
 local function sort(a, b)
@@ -292,13 +324,27 @@ local function encodeString(str)
 end
 
 local function downloadItems()
-    local data = request("https://raw.githubusercontent.com/malificent1111/lua/main/list.lua")
-    local chunk, err = load("return " .. data, "=items.lua", "t")
-    if not chunk then 
-        error("Неправильно сконфигурирован файл вещей! " .. err)
-    else
-        items = chunk()
+    local file, reason = io.open(listPath, "r")
+    if not file then
+        error("Не найден каталог товаров " .. listPath .. ": " .. tostring(reason))
     end
+
+    local data = file:read("*a")
+    file:close()
+
+    local chunk, err = load("return " .. data, "=list.lua", "t")
+    if not chunk then
+        error("Ошибка синтаксиса в " .. listPath .. ": " .. tostring(err))
+    end
+
+    local ok, loaded = pcall(chunk)
+    if not ok then
+        error("Не удалось загрузить " .. listPath .. ": " .. tostring(loaded))
+    end
+    if type(loaded) ~= "table" or type(loaded.shop) ~= "table" then
+        error(listPath .. " должен содержать таблицу с разделом shop")
+    end
+    items = loaded
 
     for item = 1, #items.shop do
         if not items.shop[item].strictHash then
@@ -326,37 +372,34 @@ local function pull(timeout, eventType)
     until computer.uptime() >= deadline
 end
 
-local function requestWithData(log, data, forceKey)
-    data.key = forceKey or key
+local function requestWithData(logData, data)
     data.server = server
     data.terminal = terminal
-    data.log = log
-    if version == "internet" then
-        local response = request(serverAddress .. encodeString(json.encode(data)))
+    data.log = logData
 
-        if response then
-            local success, decoded = pcall(json.decode, response)
+    local sent, reason = modem.send(serverAddress, port, serialization.serialize(data))
+    if not sent then
+        log("Не удалось отправить запрос серверу: " .. tostring(reason))
+        return false
+    end
 
-            if success then
+    local deadline = computer.uptime() + 3
+    repeat
+        local remaining = deadline - computer.uptime()
+        if remaining <= 0 then
+            break
+        end
+
+        local signal = {computer.pullSignal(remaining)}
+        if signal[1] == "modem_message" and signal[3] == serverAddress and signal[4] == port then
+            local decoded, err = serialization.unserialize(signal[6])
+            if decoded then
                 return decoded
             end
+            log("Ошибка разбора ответа сервера: " .. tostring(err))
+            return false
         end
-    elseif version == "modem" then
-        modem.send(serverAddress, port, serialization.serialize(data))
-        local response = {pull(3, "modem_message")}
-        
-        if response and response[3] == serverAddress and port == response[4] then
-            local data, err = serialization.unserialize(response[6])
-
-            if data then
-                return data
-            else
-                error("Error on deserealizing message, err " .. err .. " data " .. data)
-            end
-        end
-    else
-        error("Unknown program version, need internet/modem")
-    end
+    until computer.uptime() >= deadline
 
     return false
 end
@@ -822,7 +865,7 @@ local function inputWrite(write, char)
     elseif checkWrite and writes[write].len + 1 ~= writes[write].border and not writes[write].onlyClear then
         local symbol = unicode.char(char)
         if writes[write].pos ~= writes[write].len then
-            local beforeInput, afterInput = unicode.sub(1, writes[write].pos), unicode.sub(writes[write].pos, writes[write].len)
+            local beforeInput, afterInput = unicode.sub(writes[write].input, 1, writes[write].pos), unicode.sub(writes[write].input, writes[write].pos + 1, writes[write].len)
             writes[write].input = beforeInput .. symbol .. afterInput
         else
             writes[write].input = writes[write].input .. symbol
@@ -835,7 +878,7 @@ local function inputWrite(write, char)
         cursor(write, true, true)
     elseif char == 8 and writes[write].len - 1 ~= -1 then
         if writes[write].pos ~= writes[write].len then
-            local beforeInput, afterInput = unicode.sub(1, writes[write].pos - 1), unicode.sub(writes[write].pos, writes[write].len)
+            local beforeInput, afterInput = unicode.sub(writes[write].input, 1, writes[write].pos - 1), unicode.sub(writes[write].input, writes[write].pos + 1, writes[write].len)
             writes[write].input = beforeInput .. afterInput
         else
             writes[write].input = unicode.sub(writes[write].input, 1, writes[write].len - 1)
@@ -895,7 +938,7 @@ local function returnMoney()
         local totalGived = 0
 
         while totalGived < toReturn do
-            local gived = me.exportItem(moneyFingerprint, "UP", toReturn-totalGived, 0).size
+            local gived = me.exportItem(moneyFingerprint, pim_side, toReturn-totalGived, 0).size
             totalGived = totalGived + gived
         end
 
@@ -920,7 +963,7 @@ local function topUpBalance()
     for i = 1, size do
         if slot[i] then
             if slot[i].id == moneyFingerprint.id and slot[i].dmg == moneyFingerprint.dmg then
-                local takenMoney = pim.pushItem("DOWN", i, slot[i].qty)
+                local takenMoney = pim.pushItem(me_side, i, slot[i].qty)
                 totalTakenMoney = totalTakenMoney + math.floor(takenMoney)
             end
         end
@@ -1248,7 +1291,6 @@ local function blackList(name)
     setColorText(nil, 7, "[0x68f029](Не)уважаемый [0xffffff]" .. name, color.background)
     set(10, 8, "Вы внесены в чёрный список этого магазина", color.background, color.lime)
     set(28, 13, "Удачи!", color.background, color.red)
-    discord()
 end
 
 local function inDev(name)
@@ -1256,37 +1298,6 @@ local function inDev(name)
     clear()
     setColorText(nil, 8, "[0x68f029]Уважаемый [0xffffff]" .. name, color.background)
     setColorText(11, 9, "[0x68f029]Этот терминал только для разработчиков!", color.background)
-    discord()
-end
-
-local function insertKey()
-    key = ""
-    set(15, 9, "Вставьте ключ через буфер обмена", color.background, color.lime)
-
-    while true do 
-        local signal = {pull(math.huge, "clipboard")}
-
-        if signal and admins[signal[4]] then
-            key = signal[3]
-            fill(1, 9, 60, 1, " ", color.background)
-            set(12, 9, "Проверка ключа на действительность...")
-            local response = requestWithData({data = "Тестирование ключа " .. key}, {method = "test"}, key)
-
-            if response and response.code == 200 then
-                login()
-                break
-            else
-                fill(1, 9, 60, 1, " ", color.background)
-                if not response then
-                    set(19, 9, "Нет соединения с сервером", color.background, color.lime)
-                else
-                    set(nil, 9, tostring(response.message), color.background, color.lime)
-                end
-                sleep(2)
-                set(15, 9, "Вставьте ключ через буфер обмена", color.background, color.lime)
-            end
-        end
-    end
 end
 
 function alert(text, func)
@@ -1468,7 +1479,7 @@ function login(name)
         if session.name then
             log("De-auth " .. session.name)
         end
-        if not admins[session.name] and session.name then
+        if session.name and not admins[session.name] then
             computer.removeUser(session.name)
         end
         itemScan = false
@@ -1489,10 +1500,9 @@ function login(name)
 
         if active then
             clear()
-            setColorText(18, 2, "[0xffffff]Приветствуем на варпе [0x68f029]wim[0xffffff]!", color.background)
+            setColorText(18, 2, "[0xffffff]Добро пожаловать в [0x68f029]VIP-SHOP[0xffffff]!", color.background)
             setColorText(17, 5, "[0xffffff]Встаньте на [0x46c8e3]PIM[0xffffff], чтобы войти", color.background)
-            discord()
-            drawPim()
+                    drawPim()
         end
     end
 end
@@ -1567,8 +1577,16 @@ buttons = {
     info = {buttonIn = {"main"}, disabledBackground = color.background, disabledForeground = color.blackLime, background = color.background, activeBackground = color.background, foreground = color.lime, activeForeground = color.blackLime, text = "[Помощь]", x = 1, y = 19, width = 8, height = 1, action = function() toGui("info") end},
     buy = {buttonIn = {"shop"}, background = color.gray, activeBackground = color.blackGray, foreground = color.lime, activeForeground = color.blackLime, text = "Покупка", x = 19, y = 5,  width = 24, height = 3, action = function() toGui("buy") end},
     sell = {buttonIn = {"shop"}, background = color.gray, activeBackground = color.blackGray, foreground = color.lime, activeForeground = color.blackLime, text = "Пополнить баланс", x = 19, y = 9, width = 24, height = 3, action = function() topUpBalance() end},
-    nextBuy = {buttonIn = {"buy"}, disabled = true, disabledBackground = color.blackGray, disabledForeground = color.blackOrange, background = color.gray, activeBackground = color.blackGray, foreground = color.orange, activeForeground = color.blackOrange, text = "  Далее  ", x = 50, y = 18, width = 9, height = 1, action = function() buttons.purchase.disabled = true item = items.shop[lists[focus.list].scrollContent[lists[focus.list].scrollContent.activeIndex].index] toGui("buyItem", {item = item}) guiVariables[guiPath[#guiPath]].amount = 0 end},
-    nextSell = {buttonIn = {"sell"}, disabled = true, disabledBackground = color.blackGray, disabledForeground = color.blackOrange, background = color.gray, activeBackground = color.blackGray, foreground = color.orange, activeForeground = color.blackOrange, text = "  Далее  ", x = 50, y = 18, width = 9, height = 1, action = function() item = items.shop[lists[focus.list].scrollContent[lists[focus.list].scrollContent.activeIndex].index] toGui("sellItem", {item = item}) end},
+    nextBuy = {buttonIn = {"buy"}, disabled = true, disabledBackground = color.blackGray, disabledForeground = color.blackOrange, background = color.gray, activeBackground = color.blackGray, foreground = color.orange, activeForeground = color.blackOrange, text = "  Далее  ", x = 50, y = 18, width = 9, height = 1, action = function()
+        buttons.purchase.disabled = true
+        local selectedItem = items.shop[lists[focus.list].scrollContent[lists[focus.list].scrollContent.activeIndex].index]
+        toGui("buyItem", {item = selectedItem})
+        guiVariables[guiPath[#guiPath]].amount = 0
+    end},
+    nextSell = {buttonIn = {"sell"}, disabled = true, disabledBackground = color.blackGray, disabledForeground = color.blackOrange, background = color.gray, activeBackground = color.blackGray, foreground = color.orange, activeForeground = color.blackOrange, text = "  Далее  ", x = 50, y = 18, width = 9, height = 1, action = function()
+        local selectedItem = items.shop[lists[focus.list].scrollContent[lists[focus.list].scrollContent.activeIndex].index]
+        toGui("sellItem", {item = selectedItem})
+    end},
     freeFood = {buttonIn = {"other"}, disabledBackground = color.blackGray, disabledForeground = color.blackLime, background = color.gray, activeBackground = color.blackGray, foreground = color.lime, activeForeground = color.blackLime, text = "Бесплатная еда", x = 19, y = 8, width = 24, height = 3, action = function() toGui("freeFood") nextFood() end},
     --lottery = {buttonIn = {"other"}, disabled = true, disabledBackground = color.blackGray, disabledForeground = color.blackLime, background = color.gray, activeBackground = color.blackGray, foreground = color.lime, activeForeground = color.blackLime, text = "Лотерея", x = 19, y = 12, width = 24, height = 3, action = function() toGui("lottery") end},
     returnMoney = {buttonIn = {"shop"}, disabledBackground = color.blackGray, disabledForeground = color.blackLime, background = color.gray, activeBackground = color.blackGray, foreground = color.lime, activeForeground = color.blackLime, text = "Вернуть деньги", x = 19, y = 13, width = 24, height = 3, action = function() returnMoney() end},
@@ -1596,12 +1614,12 @@ buttons = {
     oreScanOne = {buttonIn = {"ore"}, switch = true, active = false, focus = true, background = color.gray, activeBackground = color.blackGray, foreground = color.lime, activeForeground = color.blackLime, text = "      1 слот      ", x = 22, y = 4, width = 18, height = 1, action = function(active) if active then itemScan = "one" else itemScan = false end end},
     oreScanMulti = {buttonIn = {"ore"}, switch = true, active = false, focus = true, background = color.gray, activeBackground = color.blackGray, foreground = color.lime, activeForeground = color.blackLime, text = "  Весь инвентарь  ", x = 22, y = 6, width = 18, height = 1, action = function(active) if active then itemScan = "multi" else itemScan = false end end},
 
-    prevInfo = {buttonIn = {"info"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = background, foreground = color.blue, activeForeground = color.blackBlue, text = "<───", x = 21, y = 16, width = 4, height = 1, action = function() drawInfo(guiPage - 1) end},
-    nextInfo = {buttonIn = {"info"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = background, foreground = color.blue, activeForeground = color.blackBlue, text = "───>", x = 36, y = 16, width = 4, height = 1, action = function() drawInfo(guiPage + 1) end},
+    prevInfo = {buttonIn = {"info"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = color.background, foreground = color.blue, activeForeground = color.blackBlue, text = "<───", x = 21, y = 16, width = 4, height = 1, action = function() drawInfo(guiPage - 1) end},
+    nextInfo = {buttonIn = {"info"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = color.background, foreground = color.blue, activeForeground = color.blackBlue, text = "───>", x = 36, y = 16, width = 4, height = 1, action = function() drawInfo(guiPage + 1) end},
     
     acceptFeedback = {buttonIn = {"feedbacks"}, notVisible = true, background = color.background, activeBackground = color.background, foreground = color.lime, activeForeground = color.blackLime, text = "[Подтвердить]", x = 24, y = 14, width = 13, height = 1, action = function() acceptFeedback() end},
-    prevFeedback = {buttonIn = {"feedbacks"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = background, foreground = color.blue, activeForeground = color.blackBlue, text = "<───", x = 21, y = 16, width = 4, height = 1, action = function() drawFeedback(guiPage - 1) end},
-    nextFeedback = {buttonIn = {"feedbacks"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = background, foreground = color.blue, activeForeground = color.blackBlue, text = "───>", x = 36, y = 16, width = 4, height = 1, action = function() drawFeedback(guiPage + 1) end}
+    prevFeedback = {buttonIn = {"feedbacks"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = color.background, foreground = color.blue, activeForeground = color.blackBlue, text = "<───", x = 21, y = 16, width = 4, height = 1, action = function() drawFeedback(guiPage - 1) end},
+    nextFeedback = {buttonIn = {"feedbacks"}, disabled = true, disabledBackground = color.background, disabledForeground = color.blackBlue, background = color.background, activeBackground = color.background, foreground = color.blue, activeForeground = color.blackBlue, text = "───>", x = 36, y = 16, width = 4, height = 1, action = function() drawFeedback(guiPage + 1) end}
 }
 
 lists = {
@@ -1634,19 +1652,14 @@ downloadItems()
 initButtons()
 initLists()
 initWrites()
-if version == "internet" then
-    insertKey()
-elseif version == "modem" then
-    modem = proxy("modem")
-    if modem.open(port) or modem.isOpen(port) then
-        login()
-    else
-        error("Невозможно открыть порт " .. port)
-    end
+if modem.isOpen(port) or modem.open(port) then
+    login()
+else
+    error("Невозможно открыть порт " .. port)
 end
 
 while true do
-    local signal = {computer.pullSignal(0)}
+    local signal = {computer.pullSignal(0.05)}
 
     if active then
         if signal[1] == "key_down" then
