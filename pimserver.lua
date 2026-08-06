@@ -163,7 +163,7 @@ local colX = {5, 30, 55, 80}
 local colWidth = 25
 local logStartY = 20
 local maxLogLines = 14
-local ADMIN_NAME = "ZoziDo"
+local ADMIN_NAME = "KaRMA__"
 local drawing = false
 
 local function updateScreenSize()
