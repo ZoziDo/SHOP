@@ -8,12 +8,12 @@ local modem = component.modem
 local port = 1414
 
 local terminals = {
-	"39f19ac0-4341-4e2f-a2ea-c62a648aaeb4"
+	"cd1862fb-486c-4f2d-b170-f6e05d902fd4"
 }
 
-for terminal = 1, #terminals do 
+for terminal = 1, #terminals do
     terminals[terminals[terminal]], terminals[terminal] = true, nil
-end 
+end
 
 local function checkPath(path)
 	if not filesystem.exists(path) then
@@ -24,7 +24,7 @@ end
 local function getTime(type)
 	local file = io.open("/tmp/time", "w")
 	file:write("time")
-	file:close() 
+	file:close()
 	local timestamp = filesystem.lastModified("/tmp/time") / 1000 + 3600 * 3
 
 	if type == "full" then
@@ -53,10 +53,10 @@ local function log(data, customPath)
 		path = path .. "/main.log"
 	end
 	local days = {date .. "/", os.date("%d.%m.%Y/", timestamp - 86400), os.date("%d.%m.%Y/", timestamp - 172800), os.date("%d.%m.%Y/", timestamp - 259200)}
-    for day = 1, #days do 
+    for day = 1, #days do
         days[days[day]], days[day] = true, nil
     end
-    for path in filesystem.list("/home/logs/") do 
+    for path in filesystem.list("/home/logs/") do
         local checkPath = "/home/logs/" .. path
         if not days[path] then
 			sendFile(checkPath)
@@ -229,7 +229,7 @@ local function responseHandler(data, address)
 									code = 200,
 									message = "Login successfully",
 									userdata = success,
-									feedbacks = readFeedbacks()	
+									feedbacks = readFeedbacks()
 								}
 								send(address, serialization.serialize(responseMessage))
 							else
@@ -272,8 +272,8 @@ local function responseHandler(data, address)
 end
 
 local function messageHandler(event, _, address, rport, _, data)
-	if port == rport then 
-		responseHandler(data, address) 
+	if port == rport then
+		responseHandler(data, address)
 	end
 end
 
