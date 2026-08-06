@@ -275,30 +275,23 @@ gpu.setBackground(colors.bg_main)
 
 local function drawBigTitle()
     gpu.setForeground(colors.accent_secondary)
-    local darkonLines = {
-        "  ██████╗ ██████╗  █████╗ ██████╗ ██╗  ██╗ ██████╗ ███╗   ██╗",
-        "  ██╔══██╗██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝██╔═══██╗████╗  ██║",
-        "  ██║  ██║██████╔╝███████║██║  ██║█████╔╝ ██║   ██║██╔██╗ ██║",
-        "  ██║  ██║██╔══██╗██╔══██║██║  ██║██╔═██╗ ██║   ██║██║╚██╗██║",
-        "  ██████╔╝██║  ██║██║  ██║██████╔╝██║  ██╗╚██████╔╝██║ ╚████║",
-    }
-    local darkonOffset = 47
-    local darkonX = math.floor((80 - #darkonLines[1]) / 2) + darkonOffset
-    for i, line in ipairs(darkonLines) do
-        gpu.set(darkonX, 4 + i, line)
-    end
 
-    local shopLines = {
-        "  ███████╗ ██╗  ██╗  ██████╗  ██████╗ ",
-        "  ██╔════╝ ██║  ██║ ██╔═══██╗ ██╔══██╗",
-        "  ███████╗ ███████║ ██║   ██║ ██████╔╝",
-        "  ╚════██║ ██╔══██║ ██║   ██║ ██╔═══╝ ",
-        "  ███████║ ██║  ██║ ╚██████╔╝ ██║     "
+    local titleLines = {
+        "██████╗ ██╗███╗   ███╗    ███████╗██╗  ██╗ ██████╗ ██████╗ ",
+        "██╔══██╗██║████╗ ████║    ██╔════╝██║  ██║██╔═══██╗██╔══██╗",
+        "██████╔╝██║██╔████╔██║    ███████╗███████║██║   ██║██████╔╝",
+        "██╔═══╝ ██║██║╚██╔╝██║    ╚════██║██╔══██║██║   ██║██╔═══╝ ",
+        "██║     ██║██║ ╚═╝ ██║    ███████║██║  ██║╚██████╔╝██║     ",
+        "╚═╝     ╚═╝╚═╝     ╚═╝    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     "
     }
-    local shopOffset = 28
-    local shopX = math.floor((80 - #shopLines[1]) / 2) + shopOffset
-    for i, line in ipairs(shopLines) do
-        gpu.set(shopX, 10 + i, line)
+
+    local startY = 8
+
+    for i, line in ipairs(titleLines) do
+        local lineWidth = unicode.len(line)
+        local x = math.floor((80 - lineWidth) / 2) + 1
+
+        gpu.set(x, startY + i - 1, line)
     end
 end
 
