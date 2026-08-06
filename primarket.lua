@@ -27,6 +27,29 @@ local function getRealTimeHM()
     return os.date("%H:%M:%S", getRealTimestamp())
 end
 
+-- Лог ошибок и попыток прерывания скрипта.
+local DEBUG_LOG_PATH = "/home/primarket_debug.log"
+
+local function writeDebugLog(message)
+    pcall(function()
+        local file = io.open(DEBUG_LOG_PATH, "a")
+        if not file then return end
+        file:write("[" .. getRealTimeString() .. "] " .. tostring(message) .. "\n")
+        file:close()
+    end)
+end
+
+-- Ctrl+Alt+C/interrupted и другие ошибки event.pull не завершают магазин.
+local function safeEventPull(timeout)
+    local result = {pcall(event.pull, timeout)}
+    if not result[1] then
+        writeDebugLog("⚠️ Попытка прервать скрипт: " .. tostring(result[2]))
+        return {}
+    end
+    table.remove(result, 1)
+    return result
+end
+
 local serverAddress = "24d536a2-4325-4724-b671-ceee9460006a"
 local ACCESS_PASSWORD = "secret"
 
@@ -191,6 +214,22 @@ if not selector then
     end
 end
 
+-- Безопасный вызов Selector. Индексация selector.setSlot выполняется внутри pcall,
+-- поэтому отсутствие Selector больше не вызывает attempt to index a nil value.
+local function safeSelectorSetSlot(slot, stack)
+    if not selector then return false end
+
+    local ok, result = pcall(function()
+        return selector.setSlot(slot, stack)
+    end)
+
+    if not ok then
+        writeDebugLog("⚠️ Ошибка Selector setSlot: " .. tostring(result))
+    end
+
+    return ok, result
+end
+
 modem.open(0xffef)
 modem.open(0xfffe)
 
@@ -254,8 +293,8 @@ local tempMessageTimer = nil
 local function updateSelectorDisplay(item)
     if not selector then return end
     if not item then
-        pcall(selector.setSlot, 0, nil)
-        pcall(selector.setSlot, 1, nil)
+        safeSelectorSetSlot(0, nil)
+        safeSelectorSetSlot(1, nil)
         return
     end
     local raw = item.internalName or item.name or item.displayName
@@ -266,8 +305,8 @@ local function updateSelectorDisplay(item)
     end
     local dmg = item.damage or 0
     local stack = { id = id, dmg = dmg }
-    pcall(selector.setSlot, 0, stack)
-    pcall(selector.setSlot, 1, stack)
+    safeSelectorSetSlot(0, stack)
+    safeSelectorSetSlot(1, stack)
 end
 
 gpu.setResolution(80, 25)
@@ -1796,7 +1835,7 @@ local function retryAccountAfterTokenRefresh()
     modem.send(serverAddress, 0xffef, serialization.serialize({op="enter", name=currentPlayer}))
     local start = os.clock()
     while os.clock() - start < 3 do
-        local ev = {event.pull(0.3)}
+        local ev = safeEventPull(0.3)
         if ev[1] == "modem_message" then
             local sender = ev[3]
             local data = ev[6]
@@ -1866,8 +1905,8 @@ local function goBackToMenu()
     currentScreen = "menu"
     drawMainMenu()
     updateSelectorDisplay(nil)
-    pcall(selector.setSlot, 0, nil)
-    pcall(selector.setSlot, 1, nil)
+    safeSelectorSetSlot(0, nil)
+    safeSelectorSetSlot(1, nil)
 end
 
 local function clearSelectorState()
@@ -1875,8 +1914,8 @@ local function clearSelectorState()
     hoveredIndex = 0
     selectedIndex = 0
     updateSelectorDisplay(nil)
-    pcall(selector.setSlot, 0, nil)
-    pcall(selector.setSlot, 1, nil)
+    safeSelectorSetSlot(0, nil)
+    safeSelectorSetSlot(1, nil)
 end
 
 local function goToHelp()
@@ -1906,7 +1945,7 @@ local function main()
     modem.send(serverAddress, 0xffef, serialization.serialize({op="register", password=ACCESS_PASSWORD}))
 
     while true do
-        local ev = {event.pull(0.5)}
+        local ev = safeEventPull(0.5)
         local e = ev[1]
 
         if currentScreen == "auth" then
@@ -2421,8 +2460,8 @@ local function main()
             hoveredIndex = 0
             selectedIndex = 0
             pcall(updateSelectorDisplay, nil)
-            pcall(selector.setSlot, 0, nil)
-            pcall(selector.setSlot, 1, nil)
+            safeSelectorSetSlot(0, nil)
+            safeSelectorSetSlot(1, nil)
             drawWelcomeScreen()
         elseif e == "modem_message" then
             local sender = ev[3]
@@ -2475,7 +2514,7 @@ local function main()
                             local start = os.clock()
                             local refreshed = false
                             while os.clock() - start < 3 do
-                                local evt = {event.pull(0.3)}
+                                local evt = safeEventPull(0.3)
                                 if evt[1] == "modem_message" then
                                     local s, d = evt[3], evt[6]
                                     if s == serverAddress then
@@ -2630,6 +2669,16 @@ end
 while true do
     local ok, err = pcall(main)
     if not ok then
-        pcall(drawCrashPopup, tostring(err))
+        local errText = tostring(err)
+        local lowerErr = string.lower(errText)
+
+        -- Если interrupted прилетел не из event.pull, а, например, во время os.sleep,
+        -- не показываем окно ошибки и сразу продолжаем работу магазина.
+        if string.find(lowerErr, "interrupted", 1, true)
+            or string.find(lowerErr, "terminate", 1, true) then
+            writeDebugLog("⚠️ Заблокирована попытка завершить скрипт: " .. errText)
+        else
+            pcall(drawCrashPopup, errText)
+        end
     end
 end
