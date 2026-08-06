@@ -277,12 +277,12 @@ local function drawBigTitle()
     gpu.setForeground(colors.accent_secondary)
 
     local titleLines = {
-        "██████╗ ██╗███╗   ███╗    ███████╗██╗  ██╗ ██████╗ ██████╗ ",
-        "██╔══██╗██║████╗ ████║    ██╔════╝██║  ██║██╔═══██╗██╔══██╗",
-        "██████╔╝██║██╔████╔██║    ███████╗███████║██║   ██║██████╔╝",
-        "██╔═══╝ ██║██║╚██╔╝██║    ╚════██║██╔══██║██║   ██║██╔═══╝ ",
-        "██║     ██║██║ ╚═╝ ██║    ███████║██║  ██║╚██████╔╝██║     ",
-        "╚═╝     ╚═╝╚═╝     ╚═╝    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     "
+        "██████╗ ██╗    ███████╗██╗  ██╗ ██████╗ ██████╗ ",
+        "██╔══██╗██║    ██╔════╝██║  ██║██╔═══██╗██╔══██╗",
+        "██████╔╝██║    ███████╗███████║██║   ██║██████╔╝",
+        "██╔═══╝ ██║    ╚════██║██╔══██║██║   ██║██╔═══╝ ",
+        "██║     ██║    ███████║██║  ██║╚██████╔╝██║     ",
+        "╚═╝     ╚═╝    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     "
     }
 
     local startY = 8
@@ -1674,7 +1674,7 @@ local function drawWelcomeScreen()
     drawCenteredText(18, "↓   Встаньте на PIM   ↓", colors.accent_main)
     drawCenteredText(19, "━━━━━━━━━━━━━━━━━━━", colors.accent_main)
     gpu.setForeground(colors.text_main)
-    drawCenteredText(22, "По любым вопросам пишите в Telegram: f0rb4ik", colors.text_main)
+    drawCenteredText(22, "По любым вопросам пишите в Discord: youtubetop", colors.text_main)
     gpu.setBackground(colors.bg_main)
     drawTempMessage()
 end
@@ -1686,7 +1686,7 @@ local function drawAuthScreen()
     gpu.setForeground(colors.text_bright)
     drawCenteredText(18, "Авторизация....", colors.text_bright)
     gpu.setForeground(colors.text_main)
-    drawCenteredText(22, "По любым вопросам пишите в Telegram: f0rb4ik", colors.text_main)
+    drawCenteredText(22, "По любым вопросам пишите в Discord: youtubetop", colors.text_main)
     gpu.setBackground(colors.bg_main)
     drawTempMessage()
 end
