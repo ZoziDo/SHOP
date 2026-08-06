@@ -12,6 +12,8 @@ local computer = require("computer")
 local filesystem = require("filesystem")
 local unicode = require("unicode")
 local serialization = require("serialization")
+local event = require("event")
+local process = require("process")
 
 local CONFIG_PATH = "/home/terminal_config.lua"
 local configChunk, configError = loadfile(CONFIG_PATH)
@@ -250,6 +252,70 @@ local function log(data, name)
     write(logDir .. "/" .. safeName .. ".log", "a", line)
 end
 
+-- ============================================================
+-- ЗАЩИТА ПУБЛИЧНОГО ТЕРМИНАЛА ОТ CTRL+C / CTRL+ALT+C
+-- ============================================================
+
+local function writeDebugLog(message)
+    -- Ошибка записи лога не должна останавливать магазин.
+    pcall(log, tostring(message), "security")
+end
+
+-- Безопасное ожидание события. Ошибка event.pull, в том числе
+-- interrupt в старых версиях OpenOS, не завершает программу.
+local function safeEventPull(timeout)
+    local result = {pcall(event.pull, timeout)}
+
+    if not result[1] then
+        writeDebugLog("Попытка прервать скрипт: " .. tostring(result[2]))
+        return {}
+    end
+
+    table.remove(result, 1)
+    return result
+end
+
+-- В новых версиях OpenOS Ctrl+Alt+C передаётся процессу как
+-- жёсткий сигнал interrupted ещё до возврата из event.pull.
+-- Перехватываем только interrupted; остальные системные сигналы
+-- продолжают обрабатываться стандартным обработчиком OpenOS.
+local function installHardInterruptProtection()
+    local ok, processInfo = pcall(process.info)
+
+    if not ok or not processInfo or type(processInfo.data) ~= "table" then
+        writeDebugLog("Не удалось включить защиту Ctrl+Alt+C: process.info недоступен")
+        return false
+    end
+
+    local originalSignal = processInfo.data.signal
+
+    processInfo.data.signal = function(reason, code)
+        if reason == "interrupted" then
+            writeDebugLog("Заблокирована попытка Ctrl+Alt+C")
+            return false
+        end
+
+        if type(originalSignal) == "function" then
+            return originalSignal(reason, code)
+        end
+
+        return false
+    end
+
+    -- Совместимость со старыми версиями OpenOS, в которых
+    -- hard interrupt проверялся через event.shouldInterrupt().
+    if type(event.shouldInterrupt) == "function" then
+        event.shouldInterrupt = function()
+            return false
+        end
+    end
+
+    writeDebugLog("Защита Ctrl+C / Ctrl+Alt+C включена")
+    return true
+end
+
+installHardInterruptProtection()
+
 local function sort(a, b)
     if type(a) ~= "table" and type(b) ~= "table" then
         return a < b
@@ -364,7 +430,7 @@ end
 local function pull(timeout, eventType)
     local deadline = (computer.uptime() + timeout) or 0
     repeat
-        local signal = {computer.pullSignal(deadline - computer.uptime())}
+        local signal = safeEventPull(deadline - computer.uptime())
 
         if signal and (signal[1] == eventType or not eventType) then
             return table.unpack(signal)
@@ -390,7 +456,7 @@ local function requestWithData(logData, data)
             break
         end
 
-        local signal = {computer.pullSignal(remaining)}
+        local signal = safeEventPull(remaining)
         if signal[1] == "modem_message" and signal[3] == serverAddress and signal[4] == port then
             local decoded, err = serialization.unserialize(signal[6])
             if decoded then
@@ -1322,7 +1388,7 @@ function alert(text, func)
     end
 
     while true do 
-        local signal = {computer.pullSignal(math.huge)}
+        local signal = safeEventPull(math.huge)
 
         if signal then
             if signal[1] == "touch" then
@@ -1659,7 +1725,7 @@ else
 end
 
 while true do
-    local signal = {computer.pullSignal(0.05)}
+    local signal = safeEventPull(0.05)
 
     if active then
         if signal[1] == "key_down" then
